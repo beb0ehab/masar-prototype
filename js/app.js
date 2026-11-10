@@ -1,5 +1,5 @@
 /* Masar prototype — front-end only. State lives in memory; reload resets it. */
-const S = { lang: 'ar', role: 'admin', q: '', stage: 'all', step: 'all', view: 'table', page: 1, tab: 'procs', period: CUR_MONTH, expType: 'all', expPaid: 'all' };
+const S = { lang: 'ar', role: 'admin', q: '', stage: 'all', step: 'all', view: 'table', dmonth: CUR_MONTH, akind: 'all', aall: false, page: 1, tab: 'procs', period: CUR_MONTH, expType: 'all', expPaid: 'all' };
 try { S.lang = localStorage.getItem('masar-lang') || 'ar'; } catch (e) { /* storage blocked */ }
 
 const L = (ar, en) => (S.lang === 'ar' ? ar : en);
@@ -86,11 +86,11 @@ function alerts() {
     if (a.travel) return;
     a.procs.forEach(p => {
       const name = lbl(byK(PROCS, p.k));
-      if (p.status === 'expired') out.push({ sev: 2, a, text: L(`انتهت صلاحية ${name}`, `${name} expired`), date: p.expiry });
-      else if (p.status === 'progress' && daysBetween(p.date, TODAY) > 14) out.push({ sev: 1, a, text: L(`${name} متأخر ${daysBetween(p.date, TODAY)} يوم`, `${name} overdue by ${daysBetween(p.date, TODAY)} days`), date: p.date });
+      if (p.status === 'expired') out.push({ kind: 'expired', sev: 2, a, text: L(`انتهت صلاحية ${name}`, `${name} expired`), date: p.expiry });
+      else if (p.status === 'progress' && daysBetween(p.date, TODAY) > 14) out.push({ kind: 'late', sev: 1, a, text: L(`${name} متأخر ${daysBetween(p.date, TODAY)} يوم`, `${name} overdue by ${daysBetween(p.date, TODAY)} days`), date: p.date });
     });
     const left = daysBetween(TODAY, a.passportExpiry);
-    if (left < 210) out.push({ sev: left < 180 ? 2 : 1, a, text: L(`جواز السفر ينتهي خلال ${left} يوم`, `Passport expires in ${left} days`), date: a.passportExpiry });
+    if (left < 210) out.push({ kind: 'passport', sev: left < 180 ? 2 : 1, a, text: L(`جواز السفر ينتهي خلال ${left} يوم`, `Passport expires in ${left} days`), date: a.passportExpiry });
   });
   return out.sort((x, y) => y.sev - x.sev || x.date.localeCompare(y.date));
 }
@@ -133,52 +133,90 @@ function openForm(title, fields, onSave) {
 }
 
 /* ---------- views ---------- */
+function breakdown(list, keyOf, labelOf) {
+  const m = {}; list.forEach(x => { const k = keyOf(x); m[k] = (m[k] || 0) + usd(x); });
+  const rows = Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ label: labelOf(k), v })), max = Math.max(...rows.map(r => r.v), 1);
+  return rows.length ? `<ol class="hb">${rows.map(r => `<li><span>${esc(r.label)}</span><div class="rb"><i style="width:${r.v / max * 100}%"></i></div><b>${money(r.v)}</b></li>`).join('')}</ol>` : `<p class="muted small">${L('لا توجد مصاريف مدفوعة في هذا الشهر.', 'Nothing paid in this month.')}</p>`;
+}
 function vDash() {
-  const c = can(), st = { registered: 0, processing: 0, ready: 0, deployed: 0 };
+  const c = can(), m = S.dmonth, pm = MONTHS[MONTHS.indexOf(m) - 1], isNow = m === CUR_MONTH;
+  const inM = (d, mm) => !!d && d.startsWith(mm);
+  const st = { registered: 0, processing: 0, ready: 0, deployed: 0 };
   APPLICANTS.forEach(a => st[stageOf(a)]++);
-  const regMonth = APPLICANTS.filter(a => a.registered.startsWith(CUR_MONTH)).length;
-  const flewMonth = APPLICANTS.filter(a => a.travel.startsWith(CUR_MONTH)).length;
-  const at = PROCS.map((p, i) => APPLICANTS.filter(a => !a.travel && currentStep(a) === i).length);
-  const maxAt = Math.max(...at, 1);
-  const al = alerts();
+  const regBy = MONTHS.map(x => APPLICANTS.filter(a => inM(a.registered, x)).length), flewBy = MONTHS.map(x => APPLICANTS.filter(a => inM(a.travel, x)).length);
+  const mi = MONTHS.indexOf(m), maxCount = Math.max(...regBy, ...flewBy, 1);
+  const at = PROCS.map((p, i) => APPLICANTS.filter(a => !a.travel && currentStep(a) === i).length), maxAt = Math.max(...at, 1);
+  const prev = v => (pm ? L(`الشهر السابق: ${v}`, `Previous month: ${v}`) : L('أول شهر في البيانات', 'First month on record'));
   const kpi = (v, label, note, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${label}</span><small>${note}</small></div>`;
+  const monthPick = `<select id="dmonth" aria-label="${L('الشهر', 'Month')}">${opts(MONTHS.slice().reverse().map(x => [x, mName(x)]), m)}</select>`;
+  const mShort = x => L(AR_M, EN_M)[+x.slice(5) - 1];
+
+  // overdue procedures & documents
+  const al = alerts(), kinds = [['all', L('الكل', 'All')], ['late', L('إجراءات متأخرة', 'Late procedures')], ['expired', L('مستندات منتهية', 'Expired documents')], ['passport', L('جوازات قاربت على الانتهاء', 'Passports expiring')]];
+  const shown = al.filter(x => S.akind === 'all' || x.kind === S.akind);
+  const alertsCard = `<section class="card"><div class="chead"><h2>${L('الإجراءات والمستندات المتأخرة', 'Overdue procedures & documents')} <em class="count">${al.length}</em></h2></div>
+    <div class="segs sm no-print">${kinds.map(([k, t]) => `<button data-act="akind" data-v="${k}" aria-pressed="${S.akind === k}">${t} <em>${k === 'all' ? al.length : al.filter(x => x.kind === k).length}</em></button>`).join('')}</div>
+    ${shown.length ? `<ul class="alerts${S.aall ? ' scroll' : ''}">${shown.slice(0, S.aall ? 999 : 6).map(x => `<li class="sev${x.sev}"><a href="#/app/${x.a.id}"><b>${esc(x.a.name)}</b> ${num(x.a.id)}<span>${esc(x.text)}</span></a></li>`).join('')}</ul>
+    ${shown.length > 6 ? `<button class="btn tiny no-print" data-act="aall">${S.aall ? L('عرض أقل', 'Show fewer') : L(`عرض الكل (${shown.length})`, `Show all (${shown.length})`)}</button>` : ''}` : empty(L('لا يوجد شيء متأخر هنا.', 'Nothing overdue here.'))}
+  </section>`;
 
   let finHtml = '';
   if (c.seeFin) {
-    const f = fin(CUR_MONTH), series = MONTHS.map(m => ({ m, ...fin(m) }));
+    const f = fin(m), pf = pm ? fin(pm) : null, series = MONTHS.map(x => ({ m: x, ...fin(x) }));
     const max = Math.max(...series.map(s => Math.max(s.rev, s.ae + s.oe)), 1);
-    const payable = sum(EXPENSES.filter(e => !e.paid), usd) + sum(OFFICE.filter(e => !e.paid), usd);
-    const receivable = sum(REVENUE.filter(e => !e.received), usd);
-    finHtml = `<section class="card"><div class="chead"><h2>${L('الصورة المالية', 'Money')} — ${mName(CUR_MONTH)}</h2><a href="#/fin">${L('فتح الحسابات', 'Open finance')}</a></div>
-      <div class="money">
-        <div><span>${L('الإيرادات المحصّلة', 'Revenue received')}</span><b>${money(f.rev)}</b></div>
-        <div><span>${L('مصاريف العاملات', 'Applicant expenses')}</span><b>${money(f.ae)}</b></div>
-        <div><span>${L('مصاريف المكتب', 'Office expenses')}</span><b>${money(f.oe)}</b></div>
-        <div class="net"><span>${L('صافي الربح', 'Net profit')}</span><b>${money(f.net)}</b></div>
-        <div><span>${L('مستحق علينا', 'We owe')}</span><b class="neg">${money(payable)}</b></div>
-        <div><span>${L('مستحق لنا من العملاء', 'Clients owe us')}</span><b class="pos">${money(receivable)}</b></div>
+    const unpaidApp = EXPENSES.filter(e => !e.paid), unpaidOff = OFFICE.filter(e => !e.paid), owed = REVENUE.filter(e => !e.received);
+    const tile = (label, v, pv, cls = '', extra = '') => `<div class="kpi m ${cls}"><span>${label}</span><b>${money(v)}</b><small>${extra || (pf ? L(`الشهر السابق: ${money(pv)}`, `Previous month: ${money(pv)}`) : '&nbsp;')}</small></div>`;
+    const due = (label, list, href, cls) => `<a class="due" href="${href}"><span>${label}<small>${L(`${list.length} بند`, `${list.length} items`)}</small></span><b class="${cls}">${money(sum(list, usd))}</b></a>`;
+    const nextDue = unpaidOff.slice().sort((a, b) => a.due.localeCompare(b.due)).slice(0, 4);
+    finHtml = `<h2 class="sect">${L('الأموال', 'Money')} — ${mName(m)}${isNow ? ` <small>${L('حتى اليوم', 'so far')}</small>` : ''}</h2>
+      <div class="kpis">
+        ${tile(L('الإيرادات', 'Revenue'), f.rev, pf?.rev, 'k-done')}
+        ${tile(L('إجمالي مصاريف العاملات', 'Applicant expenses'), f.ae, pf?.ae, 'k-prog')}
+        ${tile(L('إجمالي مصاريف المكتب', 'Office expenses'), f.oe, pf?.oe, 'k-prog')}
+        ${tile(f.net >= 0 ? L('صافي الربح', 'Net profit') : L('صافي الخسارة', 'Net loss'), f.net, pf?.net, 'k-net', f.rev ? L(`هامش ${Math.round(f.net / f.rev * 100)}% من الإيرادات`, `${Math.round(f.net / f.rev * 100)}% of revenue`) : '')}
       </div>
-      <div class="bars" role="img" aria-label="${L('الإيرادات مقابل المصروفات آخر 6 شهور', 'Revenue vs expenses, last 6 months')}">${series.map(s => `<div class="bcol"><div class="bpair"><i class="b-rev" style="height:${s.rev / max * 100}%" title="${money(s.rev)}"></i><i class="b-exp" style="height:${(s.ae + s.oe) / max * 100}%" title="${money(s.ae + s.oe)}"></i></div><span>${L(AR_M, EN_M)[+s.m.slice(5) - 1]}</span></div>`).join('')}</div>
-      <div class="legend"><span><i class="b-rev"></i>${L('إيرادات', 'Revenue')}</span><span><i class="b-exp"></i>${L('مصروفات', 'Expenses')}</span><span class="muted">${L('كل الأرقام بالدولار حسب آخر سعر صرف', 'All figures in USD at the latest rate')}</span></div>
-    </section>`;
+      <div class="two">
+        <section class="card"><div class="chead"><h2>${L('المدفوعات والمبالغ المستحقة', 'Payments & amounts due')}</h2></div>
+          <div class="paid"><span>${L('إجمالي ما دفعناه في', 'Total we paid in')} ${mName(m)}</span><b>${money(f.ae + f.oe)}</b></div>
+          <p class="muted small">${L('المستحق حتى اليوم:', 'Outstanding as of today:')}</p>
+          ${due(L('مستحق علينا — مصاريف عاملات', 'We owe — applicant expenses'), unpaidApp, '#/aexp', 'neg')}
+          ${due(L('مستحق علينا — مصاريف مكتب', 'We owe — office expenses'), unpaidOff, '#/office', 'neg')}
+          ${due(L('مستحق لنا — من العملاء', 'Owed to us — by clients'), owed, '#/fin', 'pos')}
+          ${nextDue.length ? `<p class="muted small">${L('أقرب مصاريف المكتب استحقاقاً:', 'Office bills due next:')}</p><ul class="duelist">${nextDue.map(o => `<li><span>${esc(o.desc)}</span>${num(o.due)}<b>${num(amt(o.amount, o.cur))}</b>${o.due < TODAY ? chip('expired', L('فات موعده', 'Past due')) : ''}</li>`).join('')}</ul>` : ''}
+        </section>
+        <section class="card"><div class="chead"><h2>${L('أين ذهبت المصاريف', 'Where the money went')}</h2></div>
+          <h3 class="mini-h">${L('مصاريف المكتب', 'Office expenses')} · ${money(f.oe)}</h3>
+          ${breakdown(OFFICE.filter(x => x.paid && inM(x.paidDate, m)), x => x.cat, k => lbl(byK(OFFICE_CATS, k)))}
+          <h3 class="mini-h">${L('مصاريف العاملات', 'Applicant expenses')} · ${money(f.ae)}</h3>
+          ${breakdown(EXPENSES.filter(x => x.paid && inM(x.date, m)), x => x.type, k => lbl(byK(EXP_TYPES, k)))}
+        </section>
+      </div>
+      <section class="card"><div class="chead"><h2>${L('الإيرادات والمصروفات وصافي الربح — آخر 6 شهور', 'Revenue, expenses and net profit — last 6 months')}</h2><a href="#/fin">${L('فتح الحسابات', 'Open finance')}</a></div>
+        <div class="bars" role="img" aria-label="${L('الإيرادات مقابل المصروفات', 'Revenue vs expenses')}">${series.map(s => `<div class="bcol${s.m === m ? ' on' : ''}"><div class="bpair"><i class="b-rev" style="height:${s.rev / max * 100}%" title="${money(s.rev)}"></i><i class="b-exp" style="height:${(s.ae + s.oe) / max * 100}%" title="${money(s.ae + s.oe)}"></i></div><span>${mShort(s.m)}</span></div>`).join('')}</div>
+        <div class="nets">${series.map(s => `<span class="${s.net < 0 ? 'neg' : ''}${s.m === m ? ' on' : ''}">${money(s.net)}</span>`).join('')}</div>
+        <div class="legend"><span><i class="b-rev"></i>${L('إيرادات', 'Revenue')}</span><span><i class="b-exp"></i>${L('مصروفات (عاملات + مكتب)', 'Expenses (applicants + office)')}</span><span class="muted">${L('الرقم تحت كل شهر = صافي الربح. كل الأرقام بالدولار.', 'The figure under each month is net profit. All in USD.')}</span></div>
+      </section>`;
   }
 
-  return head(L('لوحة التحكم', 'Dashboard'), `${mName(CUR_MONTH)} · ${L('اليوم', 'Today')} ${num(TODAY)}`) + `
+  return head(L('لوحة التحكم', 'Dashboard'), `${L('ملخص حالة الشركة', 'Company at a glance')} · ${L('اليوم', 'Today')} ${num(TODAY)}`, monthPick + `<button class="btn" data-act="print">${L('تصدير PDF', 'Export PDF')}</button>`) + `
+    <h2 class="sect">${L('العاملات', 'Applicants')}</h2>
     <div class="kpis">
-      ${kpi(regMonth, L('مسجّلات هذا الشهر', 'Registered this month'), L(`من ${APPLICANTS.length} إجمالاً`, `of ${APPLICANTS.length} in total`))}
+      ${kpi(regBy[mi], L('مسجّلات في', 'Registered in') + ' ' + mShort(m), prev(regBy[mi - 1]))}
       ${kpi(st.processing + st.registered, L('تحت الإجراء', 'In process'), L('ملفات مفتوحة الآن', 'open files right now'), 'k-prog')}
-      ${kpi(st.ready, L('استكملن الإجراءات', 'Procedures complete'), L('في انتظار موعد السفر', 'waiting for the flight'), 'k-ready')}
-      ${kpi(st.deployed, L('سافرن', 'Deployed'), L(`${flewMonth} هذا الشهر`, `${flewMonth} this month`), 'k-done')}
+      ${kpi(st.ready, L('استكملن الإجراءات', 'Procedures complete'), L('الآن — في انتظار السفر', 'now — waiting to fly'), 'k-ready')}
+      ${kpi(flewBy[mi], L('سافرن في', 'Deployed in') + ' ' + mShort(m), L(`${st.deployed} إجمالاً`, `${st.deployed} in total`) + (pm ? ' · ' + prev(flewBy[mi - 1]) : ''), 'k-done')}
     </div>
     <div class="two">
-      <section class="card"><div class="chead"><h2>${L('أين تقف الملفات الآن', 'Where files are right now')}</h2></div>
-        <p class="muted small">${L('عدد العاملات المنتظرات عند كل إجراء، بترتيب الرحلة من مانيلا إلى الرياض.', 'Applicants waiting at each procedure, in route order from Manila to Riyadh.')}</p>
+      <section class="card"><div class="chead"><h2>${L('التسجيل والسفر شهرياً', 'Registered and deployed per month')}</h2></div>
+        <div class="bars short" role="img" aria-label="${L('عدد المسجّلات والمسافرات كل شهر', 'Applicants registered and deployed each month')}">${MONTHS.map((x, i) => `<div class="bcol${x === m ? ' on' : ''}"><div class="bpair"><i class="b-reg" style="height:${regBy[i] / maxCount * 100}%"></i><i class="b-fly" style="height:${flewBy[i] / maxCount * 100}%"></i></div><span>${mShort(x)}</span></div>`).join('')}</div>
+        <div class="nets">${MONTHS.map((x, i) => `<span class="${x === m ? 'on' : ''}">${regBy[i]} / ${flewBy[i]}</span>`).join('')}</div>
+        <div class="legend"><span><i class="b-reg"></i>${L('مسجّلات', 'Registered')}</span><span><i class="b-fly"></i>${L('سافرن', 'Deployed')}</span></div>
+      </section>
+      <section class="card"><div class="chead"><h2>${L('أين تقف الملفات الآن', 'Where files are right now')}</h2><a href="#/apps">${L('لوحة المراحل', 'Stage board')}</a></div>
         <ol class="route-bars">${PROCS.map((p, i) => `<li><span>${lbl(p)}</span><div class="rb"><i style="width:${at[i] / maxAt * 100}%"></i></div><b>${at[i]}</b></li>`).join('')}</ol>
       </section>
-      <section class="card"><div class="chead"><h2>${L('يحتاج متابعة', 'Needs attention')} <em class="count">${al.length}</em></h2></div>
-        ${al.length ? `<ul class="alerts">${al.slice(0, 8).map(x => `<li class="sev${x.sev}"><a href="#/app/${x.a.id}"><b>${esc(x.a.name)}</b> ${num(x.a.id)}<span>${esc(x.text)}</span></a></li>`).join('')}</ul>${al.length > 8 ? `<p class="muted small">${L(`و${al.length - 8} تنبيهات أخرى في صفحة التقارير.`, `Plus ${al.length - 8} more in Reports.`)}</p>` : ''}` : empty(L('لا توجد إجراءات متأخرة.', 'Nothing is overdue.'))}
-      </section>
-    </div>${finHtml}`;
+    </div>
+    ${alertsCard}${finHtml}`;
 }
 
 function appsFiltered() {
@@ -434,6 +472,8 @@ document.addEventListener('click', e => {
   else if (act === 'pay-exp') { const x = EXPENSES.find(v => v.id === b.dataset.id); x.paid = true; x.date = TODAY; audit(`تسجيل دفع المصروف ${x.id}`, `Marked expense ${x.id} as paid`, x.appId); render(); toast(L('تم تسجيل الدفع', 'Marked as paid')); }
   else if (act === 'pay-office') { const x = OFFICE.find(v => v.id === b.dataset.id); x.paid = true; x.paidDate = TODAY; audit(`دفع مصروف مكتب: ${x.desc}`, `Paid office expense: ${x.desc}`); render(); toast(L('تم تسجيل الدفع', 'Marked as paid')); }
   else if (act === 'recv') { const x = REVENUE.find(v => v.id === b.dataset.id); x.received = true; x.date = TODAY; audit(`تحصيل دفعة عميل ${amt(x.amount, x.cur)}`, `Received client payment ${amt(x.amount, x.cur)}`, x.appId); render(); toast(L('تم تسجيل التحصيل', 'Marked as received')); }
+  else if (act === 'akind') { S.akind = b.dataset.v; render(); }
+  else if (act === 'aall') { S.aall = !S.aall; render(); }
   else if (act === 'stage' || act === 'view') { S[act] = b.dataset.v; S.page = 1; render(); }
   else if (act === 'edit-app') { const a = findApp(b.dataset.app); openForm(L('تعديل بيانات ', 'Edit details — ') + a.id, appFields(a), o => { Object.assign(a, cleanApp(o)); audit('تعديل البيانات الشخصية', 'Edited personal details', a.id); toast(L('تم حفظ التعديلات', 'Changes saved')); }); }
   else if (act === 'add-app') openForm(`${L('تسجيل عاملة جديدة', 'Register a new applicant')} — ${'APP-' + String(APPLICANTS.length + 1).padStart(4, '0')}`, appFields(), o => {
@@ -475,6 +515,7 @@ document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'role') { S.role = t.value; render(); toast(L(`أنت الآن ترى النظام كـ ${lbl(ROLES[S.role])}`, `You now see the system as ${lbl(ROLES[S.role])}`)); }
   else if (t.id === 'step') { S.step = t.value; S.page = 1; $('#apps-table').innerHTML = appsTable(); }
+  else if (t.id === 'dmonth') { S.dmonth = t.value; render(); }
   else if (t.id === 'period') { S.period = t.value; render(); }
   else if (t.id === 'expType' || t.id === 'expPaid') { S[t.id] = t.value; render(); }
   else if (t.dataset.proc || t.dataset.up) {
