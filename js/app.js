@@ -1,5 +1,5 @@
 /* Masar prototype — front-end only. State lives in memory; reload resets it. */
-const S = { lang: 'ar', role: 'admin', q: '', stage: 'all', page: 1, tab: 'procs', period: CUR_MONTH, expType: 'all', expPaid: 'all' };
+const S = { lang: 'ar', role: 'admin', q: '', stage: 'all', step: 'all', view: 'table', page: 1, tab: 'procs', period: CUR_MONTH, expType: 'all', expPaid: 'all' };
 try { S.lang = localStorage.getItem('masar-lang') || 'ar'; } catch (e) { /* storage blocked */ }
 
 const L = (ar, en) => (S.lang === 'ar' ? ar : en);
@@ -43,6 +43,9 @@ const STAGES = {
   ready: { ar: 'جاهزة للسفر', en: 'Ready to fly' }, deployed: { ar: 'سافرت', en: 'Deployed' },
 };
 const MARITAL = { single: { ar: 'عزباء', en: 'Single' }, married: { ar: 'متزوجة', en: 'Married' }, widowed: { ar: 'أرملة', en: 'Widowed' }, separated: { ar: 'منفصلة', en: 'Separated' } };
+const RELIGION = { christian: { ar: 'مسيحية', en: 'Christian' }, muslim: { ar: 'مسلمة', en: 'Muslim' } };
+const EDU = { highschool: { ar: 'ثانوي', en: 'High school' }, college: { ar: 'جامعي', en: 'College' }, vocational: { ar: 'تعليم مهني', en: 'Vocational' }, elementary: { ar: 'ابتدائي', en: 'Elementary' } };
+const KIN = { mother: { ar: 'الأم', en: 'Mother' }, sister: { ar: 'الأخت', en: 'Sister' }, brother: { ar: 'الأخ', en: 'Brother' }, husband: { ar: 'الزوج', en: 'Husband' }, other: { ar: 'أخرى', en: 'Other' } };
 const RECUR = { monthly: { ar: 'شهري', en: 'Monthly' }, yearly: { ar: 'سنوي', en: 'Yearly' }, once: { ar: 'مرة واحدة', en: 'One-time' } };
 
 /* ---------- derived data ---------- */
@@ -53,6 +56,21 @@ function stageOf(a) {
   return a.procs.some(p => p.status !== 'pending') ? 'processing' : 'registered';
 }
 const currentStep = a => a.procs.findIndex(p => !isClosed(p));
+// Which procedure she is waiting at, and for how many days
+function stepInfo(a) {
+  const i = currentStep(a); if (i < 0) return null;
+  const p = a.procs[i], since = p.date || a.procs.slice(0, i).map(x => x.date).filter(Boolean).pop() || a.registered;
+  const days = Math.max(0, daysBetween(since, TODAY));
+  return { i, p, days, late: p.status === 'expired' || days > 14 };
+}
+function passportState(a) {
+  const left = daysBetween(TODAY, a.passportExpiry);
+  if (left < 0) return { left, cls: 'expired', text: L('منتهي', 'Expired') };
+  if (left < 180) return { left, cls: 'expired', text: L(`باقي ${left} يوم — أقل من 6 شهور`, `${left} days left — under 6 months`) };
+  if (left < 365) return { left, cls: 'progress', text: L(`باقي ${Math.round(left / 30)} شهر`, `${Math.round(left / 30)} months left`) };
+  return { left, cls: 'done', text: L(`صالح ${(left / 365).toFixed(1)} سنة`, `Valid ${(left / 365).toFixed(1)} years`) };
+}
+const initials = n => n.split(' ').map(w => w[0]).slice(0, 2).join('');
 const appCost = id => sum(EXPENSES.filter(e => e.appId === id), usd);
 const findApp = id => APPLICANTS.find(a => a.id === id);
 function fin(period) {
@@ -101,14 +119,14 @@ function exportCSV(name) {
 }
 function openForm(title, fields, onSave) {
   const d = $('#dlg');
-  d.innerHTML = `<form class="form"><h3>${title}</h3><div class="fgrid">${fields.map(f => `<label class="${f.wide ? 'wide' : ''}"><span>${f.label}</span>${f.type === 'select'
+  d.innerHTML = `<form class="form"><h3>${title}</h3><div class="fgrid">${fields.map(f => f.h ? `<h4 class="wide">${f.h}</h4>` : `<label class="${f.wide ? 'wide' : ''}"><span>${f.label}</span>${f.type === 'select'
     ? `<select name="${f.k}">${opts(f.options, f.val)}</select>`
     : `<input name="${f.k}" type="${f.type || 'text'}"${f.req ? ' required' : ''}${f.type === 'number' ? ' min="0" step="any"' : ''}${f.type === 'file' ? ' accept="image/*,.pdf"' : ` value="${esc(f.val ?? '')}"`}>`}</label>`).join('')}</div>
     <div class="factions"><button type="button" class="btn" data-act="close">${L('إلغاء', 'Cancel')}</button><button class="btn primary">${L('حفظ', 'Save')}</button></div></form>`;
   d.querySelector('form').onsubmit = e => {
     e.preventDefault();
     const fd = new FormData(e.target), o = {};
-    fields.forEach(f => { o[f.k] = f.type === 'file' ? (fd.get(f.k)?.name || '') : fd.get(f.k); });
+    fields.filter(f => f.k).forEach(f => { o[f.k] = f.type === 'file' ? (fd.get(f.k)?.name || '') : fd.get(f.k); });
     onSave(o); d.close(); render();
   };
   d.showModal();
@@ -165,7 +183,7 @@ function vDash() {
 
 function appsFiltered() {
   const q = S.q.trim().toLowerCase();
-  return APPLICANTS.filter(a => (S.stage === 'all' || stageOf(a) === S.stage) && (!q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q) || a.passport.toLowerCase().includes(q)))
+  return APPLICANTS.filter(a => (S.stage === 'all' || stageOf(a) === S.stage) && (S.step === 'all' || (!a.travel && currentStep(a) === +S.step)) && (!q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q) || a.passport.toLowerCase().includes(q)))
     .sort((a, b) => b.id.localeCompare(a.id));
 }
 function appsTable() {
@@ -173,16 +191,70 @@ function appsTable() {
   S.page = Math.min(S.page, pages);
   const rows = list.slice((S.page - 1) * per, S.page * per);
   if (!list.length) return empty(L('لا توجد نتائج. جرّبي اسماً آخر أو امسحي الفلتر.', 'No matches. Try another name or clear the filter.'));
-  return `<div class="twrap"><table><thead><tr><th>${L('الرقم', 'ID')}</th><th>${L('الاسم', 'Name')}</th><th>${L('السن', 'Age')}</th><th>${L('انتهاء الجواز', 'Passport expiry')}</th><th>${L('مسار الإجراءات', 'Procedure track')}</th><th>${L('الحالة', 'Status')}</th>${can().seeFin ? `<th class="r">${L('التكلفة', 'Cost')}</th>` : ''}</tr></thead>
-    <tbody>${rows.map(a => { const s = stageOf(a); return `<tr data-href="#/app/${a.id}" tabindex="0"><td>${num(a.id)}</td><td><b>${esc(a.name)}</b></td><td>${a.age}</td><td>${num(a.passportExpiry)}</td><td>${track(a)}</td><td>${chip(s, lbl(STAGES[s]))}</td>${can().seeFin ? `<td class="r">${num(money(appCost(a.id)))}</td>` : ''}</tr>`; }).join('')}</tbody></table></div>
+  if (S.view === 'board') return appsBoard(list);
+  const where = a => {
+    const si = stepInfo(a);
+    if (a.travel) return `${L('سافرت', 'Travelled')} ${num(a.travel)}`;
+    if (!si) return L('في انتظار موعد السفر', 'Waiting for flight date');
+    return `<b>${esc(lbl(PROCS[si.i]))}</b><small class="${si.late ? 'neg' : 'muted'}">${si.p.status === 'expired' ? L('الصلاحية منتهية', 'validity expired') : L(`منذ ${si.days} يوم`, `${si.days} days`)}</small>`;
+  };
+  return `<div class="twrap"><table><thead><tr><th>${L('الرقم', 'ID')}</th><th>${L('الاسم', 'Name')}</th><th>${L('السن', 'Age')}</th><th>${L('التليفون', 'Phone')}</th><th>${L('الجواز / الانتهاء', 'Passport / expiry')}</th><th>${L('المرحلة الحالية', 'Current stage')}</th><th>${L('مسار الإجراءات', 'Procedure track')}</th><th>${L('الحالة', 'Status')}</th>${can().seeFin ? `<th class="r">${L('التكلفة', 'Cost')}</th>` : ''}</tr></thead>
+    <tbody>${rows.map(a => { const s = stageOf(a), ps = passportState(a); return `<tr data-href="#/app/${a.id}" tabindex="0"><td>${num(a.id)}</td><td><span class="who2"><i class="avatar sm">${esc(initials(a.name))}</i><b>${esc(a.name)}</b></span></td><td>${a.age}</td><td>${num(a.phone)}</td><td>${num(a.passport)}<small class="${ps.cls === 'expired' ? 'neg' : 'muted'}">${num(a.passportExpiry)}</small></td><td class="where">${where(a)}</td><td>${track(a)}</td><td>${chip(s, lbl(STAGES[s]))}</td>${can().seeFin ? `<td class="r">${num(money(appCost(a.id)))}</td>` : ''}</tr>`; }).join('')}</tbody></table></div>
     <div class="pager no-print"><span class="muted">${L(`${list.length} عاملة`, `${list.length} applicants`)}</span><button class="btn" data-act="page" data-d="-1"${S.page === 1 ? ' disabled' : ''}>${L('السابق', 'Previous')}</button><span>${S.page} / ${pages}</span><button class="btn" data-act="page" data-d="1"${S.page === pages ? ' disabled' : ''}>${L('التالي', 'Next')}</button></div>`;
 }
+function appsBoard(list) {
+  const open = list.filter(a => !a.travel);
+  const cols = [...PROCS.map((p, i) => ({ title: lbl(p), items: open.filter(a => currentStep(a) === i) })), { title: L('جاهزة للسفر', 'Ready to fly'), items: open.filter(a => currentStep(a) < 0), ready: true }];
+  return `<div class="board">${cols.map(c => `<section class="bcolm${c.ready ? ' ready' : ''}"><h3>${esc(c.title)} <em>${c.items.length}</em></h3>
+    ${c.items.map(a => { const si = stepInfo(a); return `<a class="bcard${si?.late ? ' late' : ''}" href="#/app/${a.id}"><b>${esc(a.name)}</b><span>${num(a.id)}${si ? ` · ${si.p.status === 'expired' ? L('منتهي', 'expired') : L(`${si.days} يوم`, `${si.days}d`)}` : ''}</span></a>`; }).join('') || `<p class="muted small">${L('لا أحد هنا', 'No one here')}</p>`}</section>`).join('')}</div>
+    <p class="muted small pad">${L('اللوحة تعرض الملفات المفتوحة فقط. البطاقة الحمراء = متأخرة أكثر من 14 يوماً أو صلاحية منتهية.', 'The board shows open files only. A red card means more than 14 days waiting or an expired document.')}</p>`;
+}
+function appFields(a = {}) {
+  const sel = (map) => Object.entries(map).map(([k, v]) => [k, lbl(v)]);
+  return [
+    { h: L('البيانات الشخصية', 'Personal details') },
+    { k: 'name', label: L('الاسم كما في الجواز', 'Name as in passport'), req: true, wide: true, val: a.name },
+    { k: 'dob', label: L('تاريخ الميلاد', 'Date of birth'), type: 'date', req: true, val: a.dob }, { k: 'birthplace', label: L('محل الميلاد', 'Place of birth'), val: a.birthplace },
+    { k: 'marital', label: L('الحالة الاجتماعية', 'Marital status'), type: 'select', options: sel(MARITAL), val: a.marital }, { k: 'children', label: L('عدد الأبناء', 'Children'), type: 'number', val: a.children ?? 0 },
+    { k: 'religion', label: L('الديانة', 'Religion'), type: 'select', options: sel(RELIGION), val: a.religion }, { k: 'education', label: L('المؤهل', 'Education'), type: 'select', options: sel(EDU), val: a.education },
+    { k: 'height', label: L('الطول (سم)', 'Height (cm)'), type: 'number', val: a.height }, { k: 'weight', label: L('الوزن (كجم)', 'Weight (kg)'), type: 'number', val: a.weight },
+    { h: L('التواصل', 'Contact') },
+    { k: 'phone', label: L('رقم التليفون', 'Phone'), val: a.phone }, { k: 'address', label: L('العنوان', 'Address'), val: a.address },
+    { k: 'emgName', label: L('شخص للطوارئ', 'Emergency contact'), val: a.emgName }, { k: 'emgRel', label: L('صلة القرابة', 'Relationship'), type: 'select', options: sel(KIN), val: a.emgRel },
+    { k: 'emgPhone', label: L('تليفون الطوارئ', 'Emergency phone'), val: a.emgPhone, wide: true },
+    { h: L('جواز السفر', 'Passport') },
+    { k: 'passport', label: L('رقم جواز السفر', 'Passport no.'), req: true, val: a.passport }, { k: 'passportPlace', label: L('جهة الإصدار', 'Issued at'), val: a.passportPlace },
+    { k: 'passportIssue', label: L('تاريخ الإصدار', 'Issue date'), type: 'date', val: a.passportIssue }, { k: 'passportExpiry', label: L('تاريخ الانتهاء', 'Expiry date'), type: 'date', req: true, val: a.passportExpiry },
+    { k: 'passportScan', label: L('صورة الجواز', 'Passport scan'), type: 'file', wide: true },
+    { h: L('العمل', 'Work') },
+    { k: 'experience', label: L('سنوات الخبرة بالخارج', 'Years of experience abroad'), type: 'number', val: a.experience ?? 0 }, { k: 'expCountry', label: L('بلد الخبرة السابقة', 'Previous country'), val: a.expCountry },
+    { k: 'client', label: L('العميل / المكتب', 'Client office'), type: 'select', options: CLIENTS.map(c => [c, c]), wide: true, val: a.client },
+  ];
+}
+function cleanApp(o) {
+  ['children', 'height', 'weight', 'experience'].forEach(k => { o[k] = o[k] === '' ? '' : +o[k]; });
+  o.age = Math.floor(daysBetween(o.dob, TODAY) / 365.25);
+  if (!o.passportScan) delete o.passportScan;
+  return o;
+}
+function dataTab(a) {
+  const v = x => (x === '' || x == null ? '—' : x), row = (k, val) => `<div><dt>${k}</dt><dd>${val}</dd></div>`, ps = passportState(a);
+  const sec = (t, rows) => `<h3 class="sec">${t}</h3><dl class="facts">${rows.join('')}</dl>`;
+  return sec(L('البيانات الشخصية', 'Personal details'), [row(L('الاسم', 'Name'), esc(a.name)), row(L('تاريخ الميلاد', 'Date of birth'), num(v(a.dob))), row(L('السن', 'Age'), a.age), row(L('محل الميلاد', 'Place of birth'), esc(v(a.birthplace))), row(L('الجنسية', 'Nationality'), L('فلبينية', 'Filipino')), row(L('الحالة الاجتماعية', 'Marital status'), v(lbl(MARITAL[a.marital]))), row(L('عدد الأبناء', 'Children'), v(a.children)), row(L('الديانة', 'Religion'), v(lbl(RELIGION[a.religion]))), row(L('المؤهل', 'Education'), v(lbl(EDU[a.education]))), row(L('الطول / الوزن', 'Height / weight'), a.height ? num(`${a.height} cm / ${a.weight} kg`) : '—')])
+    + sec(L('التواصل', 'Contact'), [row(L('رقم التليفون', 'Phone'), num(v(a.phone))), row(L('العنوان', 'Address'), esc(v(a.address))), row(L('شخص للطوارئ', 'Emergency contact'), `${esc(v(a.emgName))}${a.emgRel ? ` (${lbl(KIN[a.emgRel])})` : ''}`), row(L('تليفون الطوارئ', 'Emergency phone'), num(v(a.emgPhone)))])
+    + sec(L('جواز السفر', 'Passport'), [row(L('رقم الجواز', 'Passport no.'), num(a.passport)), row(L('جهة الإصدار', 'Issued at'), esc(v(a.passportPlace))), row(L('تاريخ الإصدار', 'Issue date'), num(v(a.passportIssue))), row(L('تاريخ الانتهاء', 'Expiry date'), `${num(a.passportExpiry)} ${chip(ps.cls, ps.text)}`), row(L('صورة الجواز', 'Passport scan'), `<span class="file">${esc(a.passportScan || `passport-${a.id}.jpg`)}</span>`)])
+    + sec(L('العمل والتسجيل', 'Work & registration'), [row(L('الوظيفة', 'Position'), L('عاملة منزلية', 'Domestic helper')), row(L('الخبرة بالخارج', 'Experience abroad'), a.experience ? L(`${a.experience} سنوات — ${a.expCountry}`, `${a.experience} years — ${a.expCountry}`) : L('بدون خبرة سابقة', 'First-timer')), row(L('العميل / المكتب', 'Client office'), esc(a.client)), row(L('تاريخ التسجيل', 'Registered'), num(a.registered)), row(L('أضيف بواسطة', 'Added by'), esc(a.by))]);
+}
 function vApps() {
+  const counts = { all: APPLICANTS.length }; APPLICANTS.forEach(a => { const s = stageOf(a); counts[s] = (counts[s] || 0) + 1; });
+  const segs = [['all', L('الكل', 'All')], ...Object.entries(STAGES).map(([k, v]) => [k, lbl(v)])];
   return head(L('العاملات', 'Applicants'), L('ملف مستقل لكل عاملة برقم تعريفي، مع مسار إجراءاتها حتى السفر.', 'One file per applicant with her own ID and her procedure track through to travel.'),
     exportBtns('applicants') + (can().ops ? `<button class="btn primary" data-act="add-app">${L('تسجيل عاملة', 'Register applicant')}</button>` : '')) + `
+    <div class="segs no-print" role="group" aria-label="${L('الحالة', 'Status')}">${segs.map(([k, t]) => `<button data-act="stage" data-v="${k}" aria-pressed="${S.stage === k}">${t} <em>${counts[k] || 0}</em></button>`).join('')}</div>
     <div class="toolbar no-print">
       <input id="q" type="search" value="${esc(S.q)}" placeholder="${L('بحث بالاسم أو الرقم التعريفي أو رقم الجواز', 'Search by name, ID or passport number')}" aria-label="${L('بحث', 'Search')}">
-      <select id="stage" aria-label="${L('الحالة', 'Status')}">${opts([['all', L('كل الحالات', 'All statuses')], ...Object.entries(STAGES).map(([k, v]) => [k, lbl(v)])], S.stage)}</select>
+      <select id="step" aria-label="${L('المرحلة الحالية', 'Current stage')}">${opts([['all', L('واقفة عند أي إجراء', 'Waiting at any procedure')], ...PROCS.map((p, i) => [String(i), L('واقفة عند: ', 'Waiting at: ') + lbl(p)])], S.step)}</select>
+      <span class="viewtog" role="group"><button data-act="view" data-v="table" aria-pressed="${S.view === 'table'}">${L('جدول', 'Table')}</button><button data-act="view" data-v="board" aria-pressed="${S.view === 'board'}">${L('لوحة المراحل', 'Stage board')}</button></span>
       <span class="trk-legend">${['done', 'progress', 'expired', 'pending', 'na'].map(k => `<span><i class="s-${k}"></i>${lbl(STATUS[k])}</span>`).join('')}</span>
     </div>
     <section class="card flush" id="apps-table">${appsTable()}</section>`;
@@ -212,18 +284,26 @@ function vApp(id) {
     const rev = REVENUE.filter(r => r.appId === a.id), got = sum(rev.filter(r => r.received), usd);
     body = `<div class="money slim"><div><span>${L('إجمالي تكلفة العاملة', 'Total cost')}</span><b>${money(total)}</b></div><div><span>${L('مدفوع', 'Paid')}</span><b>${money(paid)}</b></div><div><span>${L('غير مدفوع', 'Unpaid')}</span><b class="neg">${money(total - paid)}</b></div><div><span>${L('محصّل من العميل', 'Received from client')}</span><b class="pos">${money(got)}</b></div></div>
       ${expTable(exps, false)}`;
-  } else {
-    const row = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
-    body = `<dl class="facts">${row(L('الاسم', 'Name'), esc(a.name))}${row(L('السن', 'Age'), a.age)}${row(L('الجنسية', 'Nationality'), L('فلبينية', 'Filipino'))}${row(L('الحالة الاجتماعية', 'Marital status'), lbl(MARITAL[a.marital]))}${row(L('رقم التليفون', 'Phone'), num(a.phone))}${row(L('العنوان', 'Address'), esc(a.address))}${row(L('رقم جواز السفر', 'Passport no.'), num(a.passport))}${row(L('انتهاء الجواز', 'Passport expiry'), num(a.passportExpiry))}${row(L('العميل / المكتب', 'Client office'), esc(a.client))}${row(L('تاريخ التسجيل', 'Registered'), num(a.registered))}${row(L('أضيف بواسطة', 'Added by'), esc(a.by))}</dl>`;
-  }
-  const mine = LOG.filter(l => l.ref === a.id);
+  } else body = dataTab(a);
+  const mine = LOG.filter(l => l.ref === a.id), si = stepInfo(a), ps = passportState(a), doneN = a.procs.filter(isClosed).length;
+  const fact = (k, val) => `<div><dt>${k}</dt><dd>${val}</dd></div>`;
+  const idcard = `<aside class="card idcard">
+      <div class="idtop"><i class="avatar">${esc(initials(a.name))}</i><div><b>${esc(a.name)}</b>${num(a.id)}</div></div>
+      <div class="now s-${si ? si.p.status : 'done'}"><span>${L('المرحلة الحالية', 'Current stage')}</span><b>${a.travel ? L('سافرت', 'Deployed') : si ? esc(lbl(PROCS[si.i])) : L('جاهزة للسفر', 'Ready to fly')}</b>
+        <small>${a.travel ? num(a.travel) : si ? (si.p.status === 'expired' ? L('الصلاحية منتهية — يلزم التجديد', 'Validity expired — needs renewal') : L(`منذ ${si.days} يوم`, `for ${si.days} days`)) : L('كل الإجراءات مكتملة', 'All procedures complete')}</small>
+        <div class="prog"><i style="width:${doneN / 8 * 100}%"></i></div><small>${L(`${doneN} من 8 إجراءات`, `${doneN} of 8 procedures`)} · ${L(`${daysBetween(a.registered, a.travel || TODAY)} يوم منذ التسجيل`, `${daysBetween(a.registered, a.travel || TODAY)} days since registration`)}</small></div>
+      <dl class="mini-facts">${fact(L('السن', 'Age'), a.age)}${fact(L('الحالة الاجتماعية', 'Marital status'), lbl(MARITAL[a.marital]) || '—')}${fact(L('التليفون', 'Phone'), num(a.phone || '—'))}${fact(L('العنوان', 'Address'), esc(a.address || '—'))}</dl>
+      <div class="passport"><span>${L('جواز السفر', 'Passport')}</span><b>${num(a.passport)}</b><small>${L('ينتهي', 'Expires')} ${num(a.passportExpiry)}</small>${chip(ps.cls, ps.text)}</div>
+    </aside>`;
   return `<a class="back no-print" href="#/apps">${L('→ كل العاملات', '← All applicants')}</a>` +
     head(esc(a.name), `${num(a.id)} · ${chip(s, lbl(STAGES[s]))} · ${esc(a.client)}`,
-      (c.ops && s === 'ready' ? `<button class="btn primary" data-act="deploy" data-app="${a.id}">${L('تسجيل السفر', 'Record travel')}</button>` : '') + (c.fin ? `<button class="btn" data-act="add-exp" data-app="${a.id}">${L('إضافة مصروف', 'Add expense')}</button>` : '') + `<button class="btn" data-act="print">${L('طباعة الملف', 'Print file')}</button>`) + `
+      (c.ops ? `<button class="btn" data-act="edit-app" data-app="${a.id}">${L('تعديل البيانات', 'Edit details')}</button>` : '') + (c.ops && s === 'ready' ? `<button class="btn primary" data-act="deploy" data-app="${a.id}">${L('تسجيل السفر', 'Record travel')}</button>` : '') + (c.fin ? `<button class="btn" data-act="add-exp" data-app="${a.id}">${L('إضافة مصروف', 'Add expense')}</button>` : '') + `<button class="btn" data-act="print">${L('طباعة الملف', 'Print file')}</button>`) + `
+    <div class="profile">${idcard}<div class="pmain">
     <section class="card">${route}</section>
     <div class="tabs no-print" role="tablist">${tabs.map(([k, t]) => `<button role="tab" aria-selected="${S.tab === k}" data-act="tab" data-tab="${k}">${t}</button>`).join('')}</div>
     <section class="card flush">${body}</section>
-    ${mine.length ? `<section class="card"><div class="chead"><h2>${L('سجل التعديلات', 'Change history')}</h2></div>${logList(mine)}</section>` : ''}`;
+    ${mine.length ? `<section class="card"><div class="chead"><h2>${L('سجل التعديلات', 'Change history')}</h2></div>${logList(mine)}</section>` : ''}
+    </div></div>`;
 }
 
 function expTable(list, withApp = true) {
@@ -354,15 +434,12 @@ document.addEventListener('click', e => {
   else if (act === 'pay-exp') { const x = EXPENSES.find(v => v.id === b.dataset.id); x.paid = true; x.date = TODAY; audit(`تسجيل دفع المصروف ${x.id}`, `Marked expense ${x.id} as paid`, x.appId); render(); toast(L('تم تسجيل الدفع', 'Marked as paid')); }
   else if (act === 'pay-office') { const x = OFFICE.find(v => v.id === b.dataset.id); x.paid = true; x.paidDate = TODAY; audit(`دفع مصروف مكتب: ${x.desc}`, `Paid office expense: ${x.desc}`); render(); toast(L('تم تسجيل الدفع', 'Marked as paid')); }
   else if (act === 'recv') { const x = REVENUE.find(v => v.id === b.dataset.id); x.received = true; x.date = TODAY; audit(`تحصيل دفعة عميل ${amt(x.amount, x.cur)}`, `Received client payment ${amt(x.amount, x.cur)}`, x.appId); render(); toast(L('تم تسجيل التحصيل', 'Marked as received')); }
-  else if (act === 'add-app') openForm(L('تسجيل عاملة جديدة', 'Register a new applicant'), [
-    { k: 'name', label: L('الاسم كما في الجواز', 'Name as in passport'), req: true, wide: true }, { k: 'age', label: L('السن', 'Age'), type: 'number', req: true },
-    { k: 'marital', label: L('الحالة الاجتماعية', 'Marital status'), type: 'select', options: Object.entries(MARITAL).map(([k, v]) => [k, lbl(v)]) },
-    { k: 'phone', label: L('رقم التليفون', 'Phone') }, { k: 'address', label: L('العنوان', 'Address') },
-    { k: 'passport', label: L('رقم جواز السفر', 'Passport no.'), req: true }, { k: 'passportExpiry', label: L('تاريخ انتهاء الجواز', 'Passport expiry'), type: 'date', req: true },
-    { k: 'client', label: L('العميل / المكتب', 'Client office'), type: 'select', options: CLIENTS.map(c => [c, c]), wide: true },
-  ], o => {
+  else if (act === 'stage' || act === 'view') { S[act] = b.dataset.v; S.page = 1; render(); }
+  else if (act === 'edit-app') { const a = findApp(b.dataset.app); openForm(L('تعديل بيانات ', 'Edit details — ') + a.id, appFields(a), o => { Object.assign(a, cleanApp(o)); audit('تعديل البيانات الشخصية', 'Edited personal details', a.id); toast(L('تم حفظ التعديلات', 'Changes saved')); }); }
+  else if (act === 'add-app') openForm(`${L('تسجيل عاملة جديدة', 'Register a new applicant')} — ${'APP-' + String(APPLICANTS.length + 1).padStart(4, '0')}`, appFields(), o => {
     const id = 'APP-' + String(APPLICANTS.length + 1).padStart(4, '0');
-    APPLICANTS.push({ ...o, id, age: +o.age, nationality: 'Filipino', registered: TODAY, travel: '', by: me().name, procs: PROCS.map(p => ({ k: p.k, status: 'pending', date: '', expiry: '', cost: p.cost, cur: p.cur, file: '' })) });
+    cleanApp(o);
+    APPLICANTS.push({ ...o, id, nationality: 'Filipino', registered: TODAY, travel: '', by: me().name, procs: PROCS.map(p => ({ k: p.k, status: 'pending', date: '', expiry: '', cost: p.cost, cur: p.cur, file: '' })) });
     audit('تسجيل عاملة جديدة', 'Registered new applicant', id); toast(L(`تم تسجيل ${o.name} برقم ${id}`, `${o.name} registered as ${id}`)); location.hash = '#/app/' + id;
   });
   else if (act === 'add-exp') openForm(L('إضافة مصروف عاملة', 'Add applicant expense'), [
@@ -397,7 +474,7 @@ document.addEventListener('input', e => { if (e.target.id === 'q') { S.q = e.tar
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'role') { S.role = t.value; render(); toast(L(`أنت الآن ترى النظام كـ ${lbl(ROLES[S.role])}`, `You now see the system as ${lbl(ROLES[S.role])}`)); }
-  else if (t.id === 'stage') { S.stage = t.value; S.page = 1; $('#apps-table').innerHTML = appsTable(); }
+  else if (t.id === 'step') { S.step = t.value; S.page = 1; $('#apps-table').innerHTML = appsTable(); }
   else if (t.id === 'period') { S.period = t.value; render(); }
   else if (t.id === 'expType' || t.id === 'expPaid') { S[t.id] = t.value; render(); }
   else if (t.dataset.proc || t.dataset.up) {

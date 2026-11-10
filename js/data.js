@@ -96,13 +96,20 @@ const APPLICANTS = [], EXPENSES = [], REVENUE = [], OFFICE = [], LOG = [];
       const travel = n === 8 && addDays(flight.date, 3) <= TODAY ? addDays(flight.date, 3) : '';
       if (!travel) procs.forEach(p => { if (p.status === 'done' && p.expiry && p.expiry < TODAY) p.status = 'expired'; });
 
-      const client = pick(CLIENTS);
+      const client = pick(CLIENTS), last = pick(LAST), years = 23 + Math.floor(r() * 20), marital = pick(MARITAL);
+      const passportExpiry = addDays(reg, r() < 0.06 ? 60 + Math.floor(r() * 150) : 400 + Math.floor(r() * 2400));
       APPLICANTS.push({
-        id, name: pick(FIRST) + ' ' + pick(LAST), age: 23 + Math.floor(r() * 20), nationality: 'Filipino',
+        dob: `${2026 - years - 1}-${pad(1 + Math.floor(r() * 12))}-${pad(1 + Math.floor(r() * 28))}`, birthplace: pick(CITIES),
+        religion: pick(['christian', 'christian', 'muslim']), education: pick(['highschool', 'highschool', 'college', 'vocational']),
+        children: marital === 'single' ? 0 : Math.floor(r() * 4), height: 148 + Math.floor(r() * 18), weight: 45 + Math.floor(r() * 24),
+        experience: Math.floor(r() * 9), expCountry: pick(['Saudi Arabia', 'Kuwait', 'UAE', 'Qatar', 'Hong Kong']),
+        emgName: pick(FIRST) + ' ' + last, emgRel: pick(['mother', 'sister', 'brother', 'husband']),
+        emgPhone: '+63 9' + pad(Math.floor(r() * 100), 2) + ' ' + pad(Math.floor(r() * 1000), 3) + ' ' + pad(Math.floor(r() * 10000), 4),
+        passportIssue: addDays(passportExpiry, -3650), passportPlace: 'DFA ' + pick(['Manila', 'Cebu', 'Davao', 'Iloilo']),
+        id, name: pick(FIRST) + ' ' + last, age: years, nationality: 'Filipino',
         address: pick(CITIES) + ', Philippines', phone: '+63 9' + pad(Math.floor(r() * 100), 2) + ' ' + pad(Math.floor(r() * 1000), 3) + ' ' + pad(Math.floor(r() * 10000), 4),
-        marital: pick(MARITAL), passport: 'P' + pad(Math.floor(r() * 1e7), 7) + String.fromCharCode(65 + Math.floor(r() * 26)),
-        passportExpiry: addDays(reg, r() < 0.06 ? 60 + Math.floor(r() * 150) : 400 + Math.floor(r() * 2400)),
-        registered: reg, travel, client, procs, by: pick(['Jocelyn Ramos', 'Rhea Santos']),
+        marital, passport: 'P' + pad(Math.floor(r() * 1e7), 7) + String.fromCharCode(65 + Math.floor(r() * 26)),
+        passportExpiry, registered: reg, travel, client, procs, by: pick(['Jocelyn Ramos', 'Rhea Santos']),
       });
 
       // expenses follow the procedures

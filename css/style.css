@@ -193,3 +193,45 @@ dialog::backdrop { background: rgba(11, 59, 71, .45); }
   #app { display: block; } body { background: #fff; } main { padding: 0; max-width: none; }
   .card, .kpi { break-inside: avoid; }
 }
+
+/* applicants: status segments, stage board, id card */
+td small { display: block; font-size: .78rem; }
+.who2 { display: inline-flex; align-items: center; gap: 9px; }
+.avatar { flex: 0 0 auto; display: inline-grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; background: var(--deep); color: var(--mango); font: 600 1.1rem var(--display); font-style: normal; direction: ltr; }
+.avatar.sm { width: 30px; height: 30px; font-size: .72rem; background: #E0EEEF; color: var(--deep); }
+.segs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.segs button, .viewtog button { font: 500 .88rem var(--body); background: var(--card); border: 1px solid var(--line); padding: 7px 14px; border-radius: 99px; cursor: pointer; color: var(--muted); }
+.segs em { font: 600 .78rem var(--mono); font-style: normal; margin-inline-start: 4px; }
+.segs button[aria-pressed=true], .viewtog button[aria-pressed=true] { background: var(--deep); border-color: var(--deep); color: #fff; }
+.viewtog { display: inline-flex; }
+.viewtog button { border-radius: 0; padding: 7px 12px; }
+.viewtog button:first-child { border-start-start-radius: 8px; border-end-start-radius: 8px; }
+.viewtog button:last-child { border-start-end-radius: 8px; border-end-end-radius: 8px; border-inline-start: 0; }
+.board { display: flex; gap: 10px; overflow-x: auto; padding: 14px; align-items: flex-start; }
+.bcolm { flex: 0 0 172px; background: #F3F6F8; border-radius: 8px; padding: 10px; max-height: 520px; overflow-y: auto; border-top: 3px solid var(--sea); }
+.bcolm.ready { border-top-color: var(--sky); }
+.bcolm h3 { font: 600 .84rem var(--body); margin-bottom: 8px; display: flex; justify-content: space-between; gap: 6px; }
+.bcolm h3 em { font: 600 .78rem var(--mono); font-style: normal; color: var(--muted); }
+.bcard { display: block; background: var(--card); border: 1px solid var(--line); border-inline-start: 3px solid var(--mango); border-radius: 6px; padding: 7px 9px; margin-bottom: 6px; color: var(--ink); font-size: .84rem; }
+.bcard:hover { border-color: var(--sea); text-decoration: none; }
+.bcard.late { border-inline-start-color: var(--coral); background: #FEF6F5; }
+.bcolm.ready .bcard { border-inline-start-color: var(--sky); }
+.bcard b { display: block; font-weight: 600; } .bcard span { font-size: .76rem; color: var(--muted); }
+.profile { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 16px; align-items: start; }
+.idcard { padding: 0; overflow: hidden; }
+.idtop { display: flex; gap: 12px; align-items: center; padding: 16px; }
+.idtop b { display: block; font: 600 1.05rem var(--display); }
+.now { padding: 12px 16px; background: #F7F9FA; border-block: 1px solid var(--line); border-inline-start: 4px solid var(--c, #C3CED4); }
+.now span, .passport span { display: block; font-size: .76rem; color: var(--muted); }
+.now b { font: 600 1.1rem var(--display); display: block; } .now small { display: block; font-size: .8rem; color: var(--muted); }
+.prog { height: 6px; background: #DCE4E8; border-radius: 3px; margin: 8px 0 4px; overflow: hidden; }
+.prog i { display: block; height: 100%; background: var(--leaf); }
+.mini-facts { margin: 0; padding: 6px 16px; }
+.mini-facts div { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid #EBF0F2; font-size: .88rem; }
+.mini-facts dt { color: var(--muted); flex: 0 0 auto; } .mini-facts dd { margin: 0; text-align: end; font-weight: 500; }
+.passport { margin: 12px 16px 16px; padding: 12px; border: 1px dashed #9DB4BD; border-radius: 8px; background: linear-gradient(135deg, #F2F7F8, #fff); }
+.passport b { display: block; font-size: 1.1rem; letter-spacing: .08em; } .passport small { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 6px; }
+h3.sec { font: 600 .8rem var(--body); color: var(--sea); padding: 12px 18px 6px; background: #F7F9FA; border-bottom: 1px solid var(--line); }
+.form h4 { margin: 8px 0 0; font: 600 .82rem var(--body); color: var(--sea); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.form .fgrid { max-height: 64vh; overflow-y: auto; padding: 2px; }
+@media (max-width: 900px) { .profile { grid-template-columns: 1fr; } }
